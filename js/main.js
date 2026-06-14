@@ -76,10 +76,12 @@ function createGardenDefs() {
             </feMerge>
         </filter>
 
-        <linearGradient id="stemGradient" x1="0%" y1="100%" x2="0%" y2="0%">
-            <stop offset="0%" stop-color="#1b5e20"/>
-            <stop offset="45%" stop-color="#2f8e3b"/>
-            <stop offset="100%" stop-color="#74c36b"/>
+        <linearGradient id="stemGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#0a3517"/>
+            <stop offset="24%" stop-color="#13702d"/>
+            <stop offset="52%" stop-color="#26b34b"/>
+            <stop offset="76%" stop-color="#167c31"/>
+            <stop offset="100%" stop-color="#082b13"/>
         </linearGradient>
 
         <radialGradient id="sunflowerCenter" cx="42%" cy="38%" r="70%">
@@ -442,7 +444,7 @@ function getTaperedStemPath(points) {
         const nx = -dy / length;
         const ny = dx / length;
         const progress = i / (points.length - 1);
-        const width = 7.5 - progress * 5.4;
+        const width = getStemWidth(progress);
 
         left.push({
             x: point.x + nx * width,
@@ -456,6 +458,20 @@ function getTaperedStemPath(points) {
 
     const all = left.concat(right.reverse());
     return `M ${all.map((point) => `${point.x} ${point.y}`).join(" L ")} Z`;
+}
+
+function getStemWidth(progress) {
+    const slimStem = 2.2 + 5.4 * Math.pow(1 - progress, 1.15);
+    const trunkBase =
+        progress < 0.38
+            ? 19 * Math.pow(1 - progress / 0.38, 1.55)
+            : 0;
+    const rootFoot =
+        progress < 0.09
+            ? 12 * Math.pow(1 - progress / 0.09, 0.7)
+            : 0;
+
+    return slimStem + trunkBase + rootFoot;
 }
 
 function createFireflies() {
