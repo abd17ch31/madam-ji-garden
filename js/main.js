@@ -14,6 +14,57 @@ let time = 0;
 let lastFrameTime = performance.now();
 let plantId = 0;
 let lovePopupTimer = null;
+// Cap total plants to avoid unbounded DOM growth (helps with performance)
+const MAX_PLANTS = Math.max(40, Math.floor(window.innerWidth / 14));
+// Pool for recycled plant SVG groups to avoid frequent DOM/node creation
+const plantPool = [];
+// frame counter to reduce frequency of some non-essential updates
+let frameCounter = 0;
+// culling buffer (px) around viewport to decide visibility for rendering
+const CULL_BUFFER = 160;
+// If plant count exceeds this, switch to low-detail rendering
+const LOW_DETAIL_THRESHOLD = Math.max(120, Math.floor(window.innerWidth / 6));
+// Enable rasterized images for flowers
+const ENABLE_RASTER = true;
+// Enable canvas renderer (off by default)
+let ENABLE_CANVAS = false;
+
+// Cache for raster PNG dataURLs keyed by type|color|detail
+const flowerImageCache = {};
+const canvasEl = document.getElementById("gardenCanvas");
+let canvasCtx = null;
+if (canvasEl) {
+    canvasCtx = canvasEl.getContext("2d");
+    function resizeCanvas() {
+        canvasEl.width = window.innerWidth;
+        canvasEl.height = window.innerHeight;
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+}
+
+// Public toggles
+window.enableCanvasRenderer = function (enabled) {
+    ENABLE_CANVAS = !!enabled;
+    if (ENABLE_CANVAS) {
+        garden.style.display = 'none';
+        canvasEl.style.display = '';
+    } else {
+        garden.style.display = '';
+        canvasEl.style.display = 'none';
+    }
+};
+const SHOW_FPS = true; // toggleable
+let fpsElement = null;
+let fpsLastUpdate = performance.now();
+let fpsFrameCount = 0;
+let fpsSmoothed = 0;
+
+if (SHOW_FPS) {
+    // defer grabbing the element until DOM is ready; script sits at document end so should exist
+    fpsElement = document.getElementById("fpsCounter");
+    if (fpsElement) fpsElement.textContent = "FPS: —";
+}
 
 const grassHeight = window.innerHeight * 0.18;
 const groundY = window.innerHeight - grassHeight;
@@ -132,24 +183,20 @@ function createGrassBlades() {
 }
 
 function createPlant(event) {
-    if (event.clientY > groundY - 20) {
-        return;
-    }
+    createPlantAt(event.clientX, event.clientY);
+}
+
+function createPlantAt(x, y) {
+    if (y > groundY - 20) return;
 
     const plant = {
         id: plantId++,
-        targetX: event.clientX,
-        targetY: event.clientY,
-        expectedPoints:
-            Math.max(
-                1,
-                Math.ceil(
-                    Math.hypot(
-                        event.clientX - event.clientX,
-                        event.clientY - groundY
-                    ) / STEM_SEGMENT_LENGTH
-                )
-            ),
+        targetX: x,
+        targetY: y,
+        expectedPoints: Math.max(
+            1,
+            Math.ceil(Math.hypot(0, y - groundY) / STEM_SEGMENT_LENGTH)
+        ),
         bloomed: false,
         flowerBuilt: false,
         bloomScale: 0,
@@ -161,7 +208,7 @@ function createPlant(event) {
         nextLeafAt: 12,
         points: [
             {
-                x: event.clientX,
+                x,
                 y: groundY
             }
         ],
@@ -170,9 +217,71 @@ function createPlant(event) {
 
     plants.push(plant);
     bringButterfliesToFront();
+
+    // Keep number of plants bounded to avoid excessive DOM nodes and layout work
+    trimPlantsIfNeeded();
+
+    return plant;
+}
+
+function removePlant(plant) {
+    try {
+        if (plant && plant.elements && plant.elements.group && plant.elements.group.parentNode) {
+            garden.removeChild(plant.elements.group);
+        }
+    } catch (e) {
+        // ignore removal errors
+    }
+
+    const idx = plants.indexOf(plant);
+    if (idx !== -1) plants.splice(idx, 1);
+
+    const bidx = bloomedPlants.indexOf(plant);
+    if (bidx !== -1) bloomedPlants.splice(bidx, 1);
+
+    // Clear any butterflies targeting this plant
+    butterflies.forEach((butterfly) => {
+        if (butterfly.targetPlant === plant) {
+            butterfly.targetPlant = null;
+            butterfly.layer = "over";
+            placeButterflyLayer(butterfly, true);
+        }
+    });
+
+    // Recycle the plant's element group for reuse to avoid DOM/node churn
+    if (plant && plant.elements && plant.elements.group) {
+        try {
+            // clear flower contents to reduce retained nodes
+            if (plant.elements.flower) plant.elements.flower.innerHTML = "";
+        } catch (e) {}
+
+        plantPool.push(plant.elements);
+    }
+}
+
+function trimPlantsIfNeeded() {
+    while (plants.length > MAX_PLANTS) {
+        // remove the oldest plant (index 0)
+        removePlant(plants[0]);
+    }
 }
 
 function createPlantElements() {
+    // Reuse an existing element group from the pool if available
+    if (plantPool.length) {
+        const reused = plantPool.pop();
+        // ensure it's back in the DOM
+        garden.appendChild(reused.group);
+        // reset any transient attributes
+        try {
+            reused.stem.removeAttribute("d");
+            reused.highlight.removeAttribute("d");
+            reused.bud.removeAttribute("opacity");
+            reused.flower.removeAttribute("transform");
+        } catch (e) {}
+        return reused;
+    }
+
     const group = svgElement("g", { class: "plant" });
     const stem = svgElement("path", {
         fill: "url(#stemGradient)",
@@ -301,6 +410,15 @@ function updateLeaves(plant, delta) {
 function renderPlants() {
     plants.forEach((plant) => {
         const tip = plant.points[plant.points.length - 1];
+        // Skip DOM updates for plants not near the viewport to reduce layout/paint work
+        const visible = isPlantVisible(tip);
+
+        if (!visible) {
+            // mark dirty so when it becomes visible we repaint immediately
+            plant.dirtyStem = true;
+            plant.dirtyLeaves = true;
+            return;
+        }
 
         if (plant.dirtyStem) {
             plant.elements.stem.setAttribute("d", getTaperedStemPath(plant.points));
@@ -330,7 +448,72 @@ function renderPlants() {
     });
 }
 
+function isPlantVisible(tip) {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    return (
+        tip.x >= -CULL_BUFFER &&
+        tip.x <= w + CULL_BUFFER &&
+        tip.y >= -CULL_BUFFER &&
+        tip.y <= h + CULL_BUFFER
+    );
+}
+
+function drawCanvasPlants() {
+    if (!canvasCtx) return;
+    const ctx = canvasCtx;
+    ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+
+    // draw stems first (simple stroked path)
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#2a7b3a';
+    plants.forEach((plant) => {
+        const tip = plant.points[plant.points.length - 1];
+        if (!isPlantVisible(tip)) return;
+        const d = getTaperedStemPath(plant.points);
+        try {
+            const p = new Path2D(d);
+            ctx.stroke(p);
+        } catch (e) {
+            // fallback: draw simple line
+            ctx.beginPath();
+            ctx.moveTo(plant.points[0].x, plant.points[0].y);
+            for (let i = 1; i < plant.points.length; i++) ctx.lineTo(plant.points[i].x, plant.points[i].y);
+            ctx.stroke();
+        }
+    });
+    ctx.restore();
+
+    // draw flowers
+    plants.forEach((plant) => {
+        const tip = plant.points[plant.points.length - 1];
+        if (!isPlantVisible(tip)) return;
+        const lowDetail = plants.length > LOW_DETAIL_THRESHOLD;
+        const key = `${plant.flowerType}|${plant.flowerColor}|${lowDetail ? 'L' : 'H'}`;
+        const cache = flowerImageCache[key];
+        if (cache && cache.pngDataUrl) {
+            const img = new Image();
+            img.src = cache.pngDataUrl;
+            // draw centered
+            ctx.drawImage(img, tip.x - 40, tip.y - 40, 80, 80);
+        } else {
+            // fallback: draw simple circle
+            ctx.save();
+            ctx.fillStyle = plant.flowerColor || '#ff80ab';
+            ctx.beginPath();
+            ctx.arc(tip.x, tip.y, 8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+    });
+}
+
 function renderLeaves(plant) {
+    // Skip leaves when in low-detail mode to reduce per-plant work
+    if (plants.length > LOW_DETAIL_THRESHOLD) return;
     const leafGroup = plant.elements.leaves;
     const needed = plant.leaves.length;
 
@@ -387,28 +570,150 @@ function buildFlower(plant) {
         return;
     }
 
+    // Use cached flower templates to avoid creating many SVG nodes repeatedly
     plant.elements.flower.innerHTML = "";
 
-    if (plant.flowerType === "sunflower") {
-        drawSunflower(plant.elements.flower);
-    } else if (plant.flowerType === "tulip") {
-        drawTulip(plant.elements.flower, plant.flowerColor);
-    } else if (plant.flowerType === "blossom") {
-        drawBlossom(plant.elements.flower, plant.flowerColor);
-    } else if (plant.flowerType === "rose") {
-        drawRose(plant.elements.flower, plant.flowerColor);
-    } else if (plant.flowerType === "lotus") {
-        drawLotus(plant.elements.flower, plant.flowerColor);
-    } else if (plant.flowerType === "poppy") {
-        drawPoppy(plant.elements.flower, plant.flowerColor);
-    } else if (plant.flowerType === "orchid") {
-        drawOrchid(plant.elements.flower, plant.flowerColor);
-    } else {
-        drawDaisy(plant.elements.flower, plant.flowerColor);
+    const lowDetail = plants.length > LOW_DETAIL_THRESHOLD;
+
+    if (ENABLE_CANVAS) {
+        // canvas renderer will draw it; keep a lightweight marker
+        plant.flowerBuilt = true;
+        bloomedPlants.push(plant);
+        return;
     }
+
+    if (ENABLE_RASTER) {
+        const key = `${plant.flowerType}|${plant.flowerColor}|${lowDetail ? 'L' : 'H'}`;
+        const cached = flowerImageCache[key];
+        if (cached && cached.pngDataUrl) {
+            // insert an SVG image element referencing the PNG
+            const img = svgElement('image', {
+                href: cached.pngDataUrl,
+                width: 80,
+                height: 80,
+                x: -40,
+                y: -40
+            });
+            plant.elements.flower.appendChild(img);
+            plant.flowerBuilt = true;
+            bloomedPlants.push(plant);
+            return;
+        }
+        // if not yet cached, fall back to SVG template and generate in background
+        const template = getFlowerTemplate(plant.flowerType, plant.flowerColor, lowDetail);
+        plant.elements.flower.appendChild(template.cloneNode(true));
+        generateFlowerPNG(plant.flowerType, plant.flowerColor, lowDetail);
+        plant.flowerBuilt = true;
+        bloomedPlants.push(plant);
+        return;
+    }
+
+    const template = getFlowerTemplate(plant.flowerType, plant.flowerColor, lowDetail);
+    plant.elements.flower.appendChild(template.cloneNode(true));
 
     plant.flowerBuilt = true;
     bloomedPlants.push(plant);
+}
+
+// Cache for generated flower templates keyed by "type|color|detail"
+const flowerTemplateCache = {};
+
+function getFlowerTemplate(type, color, lowDetail = false) {
+    const key = `${type}|${color}|${lowDetail ? 'L' : 'H'}`;
+    if (flowerTemplateCache[key]) return flowerTemplateCache[key];
+
+    // build template in memory (not attached to DOM)
+    const container = svgElement("g");
+
+    if (lowDetail) {
+        // simplified flower: fewer petals, no filters, small center
+        const petalCount = 6;
+        const petalLen = 28;
+        const petalW = 8;
+
+        for (let i = 0; i < petalCount; i++) {
+            const rot = i * (360 / petalCount);
+            const pet = svgElement("ellipse", {
+                cx: 0,
+                cy: -petalLen / 2,
+                rx: petalW,
+                ry: petalLen / 2,
+                fill: shadeColor(color, i % 2 === 0 ? -6 : 6),
+                transform: `rotate(${rot})`
+            });
+            container.appendChild(pet);
+        }
+
+        container.appendChild(svgElement("circle", {
+            cx: 0,
+            cy: 0,
+            r: 6,
+            fill: "#6b4b2b",
+            opacity: 0.95
+        }));
+
+        flowerTemplateCache[key] = container;
+        return container;
+    }
+
+    if (type === "sunflower") {
+        drawSunflower(container);
+    } else if (type === "tulip") {
+        drawTulip(container, color);
+    } else if (type === "blossom") {
+        drawBlossom(container, color);
+    } else if (type === "rose") {
+        drawRose(container, color);
+    } else if (type === "lotus") {
+        drawLotus(container, color);
+    } else if (type === "poppy") {
+        drawPoppy(container, color);
+    } else if (type === "orchid") {
+        drawOrchid(container, color);
+    } else {
+        drawDaisy(container, color);
+    }
+
+    flowerTemplateCache[key] = container;
+    return container;
+}
+
+function generateFlowerPNG(type, color, lowDetail = false) {
+    const key = `${type}|${color}|${lowDetail ? 'L' : 'H'}`;
+    if (flowerImageCache[key] && flowerImageCache[key].pngDataUrl) return Promise.resolve(flowerImageCache[key]);
+
+    // Build an SVG string wrapping the template and defs
+    const defsNode = garden.querySelector('defs');
+    const defsHtml = defsNode ? defsNode.innerHTML : '';
+    const tempGroup = getFlowerTemplate(type, color, lowDetail).cloneNode(true);
+    const wrapperSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="-60 -60 120 120">` +
+        `<defs>${defsHtml}</defs>` +
+        tempGroup.outerHTML +
+        `</svg>`;
+
+    const svgDataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(wrapperSvg);
+
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = function () {
+            // draw to offscreen canvas to create a PNG data URL
+            const off = document.createElement('canvas');
+            off.width = 120;
+            off.height = 120;
+            const ctx = off.getContext('2d');
+            ctx.clearRect(0, 0, off.width, off.height);
+            ctx.drawImage(img, 0, 0);
+            const png = off.toDataURL('image/png');
+            flowerImageCache[key] = { pngDataUrl: png };
+            resolve(flowerImageCache[key]);
+        };
+        img.onerror = function () {
+            // fallback: cache null to avoid retry storm
+            flowerImageCache[key] = { pngDataUrl: null };
+            resolve(flowerImageCache[key]);
+        };
+        img.src = svgDataUrl;
+    });
 }
 
 function getCenterLinePath(points) {
@@ -1356,8 +1661,47 @@ function animate(frameTime = performance.now()) {
 
     updatePlants(delta);
     renderPlants();
-    updateFireflies();
-    updateButterflies();
+
+    // Reduce frequency of non-essential updates to lower CPU work when many plants exist
+    frameCounter++;
+    if (frameCounter % 2 === 0) {
+        updateFireflies();
+        updateButterflies();
+    }
+
+    // FPS measurement and display (update every 250ms)
+    if (SHOW_FPS && fpsElement) {
+        fpsFrameCount++;
+        const now = performance.now();
+        const elapsed = now - fpsLastUpdate;
+        if (elapsed >= 250) {
+            const fps = (fpsFrameCount / elapsed) * 1000;
+            // smooth value for readability
+            fpsSmoothed = fpsSmoothed ? fpsSmoothed * 0.85 + fps * 0.15 : fps;
+            fpsElement.textContent = `FPS: ${Math.round(fpsSmoothed)} · Plants: ${plants.length}`;
+            fpsLastUpdate = now;
+            fpsFrameCount = 0;
+        }
+    }
+
+    // expose simple stress test helper on window for quick benchmarking
+    if (!window.runStressTest) {
+        window.createPlantAt = createPlantAt;
+        window.runStressTest = function (count) {
+            const margin = 40;
+            for (let i = 0; i < count; i++) {
+                const x = margin + Math.random() * (window.innerWidth - margin * 2);
+                const y = 60 + Math.random() * Math.max(80, groundY - 120);
+                createPlantAt(x, y);
+            }
+            return `spawned ${count} plants`;
+
+        // Canvas drawing when enabled
+        if (ENABLE_CANVAS && canvasCtx) {
+            drawCanvasPlants();
+        }
+        };
+    }
 
     requestAnimationFrame(animate);
 }
