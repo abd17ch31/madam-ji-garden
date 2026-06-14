@@ -1707,3 +1707,23 @@ function animate(frameTime = performance.now()) {
 }
 
 animate();
+
+// Wire the surprise button to open the empty-canvas page
+try {
+    const surprise = document.getElementById('surpriseBtn');
+    if (surprise) {
+        surprise.addEventListener('click', () => {
+            // navigate to the empty canvas page
+            window.location.href = 'canvas.html';
+        });
+    }
+    // wire the Storybook button to a blank storybook page we'll populate later
+    const storyBtn = document.getElementById('openStorybookBtn');
+    if (storyBtn) {
+        storyBtn.addEventListener('click', () => {
+            window.location.href = 'storybook.html';
+        });
+    }
+} catch (e) {
+    // ignore if DOM not ready
+}

@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Empty Canvas</title>
+    <style>
+        html,body { height:100%; margin:0; }
+        body { background: #071421; display:flex; align-items:center; justify-content:center; }
+        canvas { width:100%; height:100%; display:block; }
+        .note { position:fixed; top:12px; left:12px; color:#cfeee0; font-family:system-ui,Segoe UI,Roboto,Arial; }
+
+        /* Heading */
+        .gift-heading {
+            position: fixed;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 60;
+            margin: 0;
+            padding: 6px 14px;
+            font-family: 'Georgia', serif;
+            color: #fff7e6;
+            background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,240,200,0.03));
+            border-radius: 999px;
+            border: 1px solid rgba(255, 230, 170, 0.12);
+            box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+            font-size: 18px;
+            letter-spacing: 0.6px;
+            pointer-events: none;
+        }
+
+        @media (max-width: 520px) {
+            .gift-heading { font-size: 14px; top: 8px; padding: 5px 10px; }
+        }
+
+        /* Frames grid */
+        .image-frames {
+            position: fixed;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: min(1100px, 92vw);
+            max-width: 1100px;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 18px;
+            z-index: 40;
+            pointer-events: none;
+        }
+
+        .frame {
+            background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+            border-radius: 12px;
+            border: 2px dashed rgba(255,255,255,0.14);
+            box-shadow: 0 8px 30px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.02);
+            min-height: 160px;
+            display: block;
+            color: #e9ffe9;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+            pointer-events: auto;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .frame .inner {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 0;
+            color: #dfffe0;
+            font-size: 14px;
+            background: rgba(0,0,0,0.0);
+            border-radius: 8px;
+            background-repeat: no-repeat;
+            background-position: center;
+            background-size: contain; /* ensure full image fits without cropping */
+        }
+
+        @media (max-width: 920px) {
+            .image-frames { grid-template-columns: repeat(2, 1fr); width: min(760px, 94vw); }
+            .frame { min-height: 140px; }
+        }
+
+        @media (max-width: 480px) {
+            .image-frames { grid-template-columns: 1fr; width: 90vw; gap: 12px; }
+            .frame { min-height: 110px; border-radius: 10px; }
+        }
+    </style>
+</head>
+<body>
+    <h1 class="gift-heading">From Cherry To Cheeku</h1>
+    <div class="note">Empty canvas — add images later</div>
+    <canvas id="emptyCanvas" aria-hidden="false"></canvas>
+
+    <!-- Image frames (placeholders) -->
+    <div class="image-frames" aria-hidden="false">
+        <!-- 8 frames -->
+        <div class="frame"><div class="inner">Place image inside</div></div>
+        <div class="frame"><div class="inner">Place image inside</div></div>
+        <div class="frame"><div class="inner">Place image inside</div></div>
+        <div class="frame"><div class="inner">Place image inside</div></div>
+        <div class="frame"><div class="inner">Place image inside</div></div>
+        <div class="frame"><div class="inner">Place image inside</div></div>
+        <div class="frame"><div class="inner">Place image inside</div></div>
+        <div class="frame"><div class="inner">Place image inside</div></div>
+    </div>
+    <!-- hidden file input used to load images into frames -->
+    <input id="frameFile" type="file" accept="image/*" style="display:none" />
+
+    <script>
+        const canvas = document.getElementById('emptyCanvas');
+        const ctx = canvas.getContext('2d');
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            // clear background (user will add images later)
+            ctx.fillStyle = '#071421';
+            ctx.fillRect(0,0,canvas.width,canvas.height);
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Image frame handling: allow clicking or dropping images into frames
+        const frames = Array.from(document.querySelectorAll('.image-frames .frame'));
+        const fileInput = document.getElementById('frameFile');
+        let activeCanvasImageSrc = null;
+
+        function drawSrcToCanvas(src) {
+            if (!src) return;
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = function () {
+                // draw cover
+                const cw = canvas.width, ch = canvas.height;
+                const iw = img.width, ih = img.height;
+                const ratio = Math.max(cw / iw, ch / ih);
+                const dw = iw * ratio, dh = ih * ratio;
+                const dx = (cw - dw) / 2;
+                const dy = (ch - dh) / 2;
+                ctx.clearRect(0,0,cw,ch);
+                ctx.drawImage(img, dx, dy, dw, dh);
+            };
+            img.src = src;
+            activeCanvasImageSrc = src;
+        }
+
+        frames.forEach((frame, idx) => {
+            // allow only first 4 frames to be populated automatically (per request)
+            const enableLoad = idx < 4;
+            const inner = frame.querySelector('.inner');
+
+            function setImage(file) {
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    inner.style.backgroundImage = `url('${e.target.result}')`;
+                    inner.style.backgroundSize = 'contain';
+                    inner.style.backgroundPosition = 'center';
+                    inner.textContent = '';
+                    // draw to full canvas and set as active
+                    drawSrcToCanvas(e.target.result);
+                };
+                reader.readAsDataURL(file);
+            }
+
+            if (enableLoad) {
+                // click to open file picker
+                frame.style.cursor = 'pointer';
+                frame.addEventListener('click', () => fileInput.click());
+
+                // drag & drop
+                frame.addEventListener('dragover', (ev) => { ev.preventDefault(); frame.classList.add('dragover'); });
+                frame.addEventListener('dragleave', () => frame.classList.remove('dragover'));
+                frame.addEventListener('drop', (ev) => {
+                    ev.preventDefault();
+                    frame.classList.remove('dragover');
+                    const file = ev.dataTransfer.files && ev.dataTransfer.files[0];
+                    if (file && file.type.startsWith('image/')) setImage(file);
+                });
+            }
+
+            // store index for file input handler
+            frame.dataset.index = idx;
+        });
+
+        fileInput.addEventListener('change', (ev) => {
+            const file = ev.target.files && ev.target.files[0];
+            if (!file) return;
+            // find the first clicked frame (we assume user clicked a frame before selecting)
+            // Heuristic: find focused frame via :hover or last mouse position
+            const hovered = frames.find(f => f.matches(':hover')) || frames[0];
+            const inner = hovered.querySelector('.inner');
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                inner.style.backgroundImage = `url('${e.target.result}')`;
+                inner.style.backgroundSize = 'contain';
+                inner.style.backgroundPosition = 'center';
+                inner.textContent = '';
+            };
+            reader.readAsDataURL(file);
+            // reset input
+            fileInput.value = '';
+            // draw to canvas (reader.onload will handle drawing)
+        });
+
+        // Small visual for dragover
+        const style = document.createElement('style');
+        style.textContent = `.frame.dragover { border-color: rgba(255,255,255,0.36); transform: translateY(-4px); box-shadow: 0 18px 40px rgba(0,0,0,0.6); }`;
+        document.head.appendChild(style);
+
+        // clicking any frame will draw its image (if any) to the canvas
+        frames.forEach((frame) => {
+            frame.addEventListener('click', () => {
+                const inner = frame.querySelector('.inner');
+                // check for background-image
+                const bg = getComputedStyle(inner).backgroundImage;
+                if (bg && bg !== 'none') {
+                    // extract url from background-image: url("...")
+                    const m = bg.match(/url\(["']?(.*?)["']?\)/);
+                    if (m && m[1]) drawSrcToCanvas(m[1]);
+                }
+            });
+        });
+
+        // redraw active image on resize
+        window.addEventListener('resize', () => {
+            resize();
+            if (activeCanvasImageSrc) drawSrcToCanvas(activeCanvasImageSrc);
+        });
+
+        // Preload first 4 images from assets folder into frames if present
+        (function preloadAssets() {
+            const assetPaths = ['assets/image1.png','assets/image2.png','assets/image3.png','assets/image4.png'];
+            for (let i = 0; i < 4; i++) {
+                const p = assetPaths[i];
+                const frame = frames[i];
+                if (!frame) continue;
+                // set as background if the file exists — browsers will silently fail if resource missing
+                const inner = frame.querySelector('.inner');
+                inner.style.backgroundImage = `url('${p}')`;
+                inner.style.backgroundSize = 'contain';
+                inner.style.backgroundPosition = 'center';
+                inner.textContent = '';
+                if (i === 0) {
+                    // make the first image fill the canvas by default
+                    drawSrcToCanvas(p);
+                }
+            }
+        })();
+    </script>
+</body>
+</html>

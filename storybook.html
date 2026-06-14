@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Storybook</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Flipbook implementation: loads images from `flip book` folder named 1..15.jpeg -->
+    <main class="storybook-root">
+        <div class="book-wrap">
+            <div class="book">
+                <div class="page left-page">
+                    <div class="page-inner">
+                        <div class="page-image"></div>
+                    </div>
+                </div>
+
+                <div class="page right-page">
+                    <div class="page-inner">
+                        <div class="page-image"></div>
+                        <div class="page-cover">
+                            <div class="cover-text">Our Storybook</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="page-flip-overlay flip-prev" title="Previous page"></div>
+                <div class="page-flip-overlay flip-next" title="Next page"></div>
+            </div>
+
+            <!-- Pre-embed page images so they are visible immediately -->
+            <div class="pages-data" aria-hidden="true" style="display:none;">
+                <img data-page="1" src="flip book/1.jpeg" />
+                <img data-page="2" src="flip book/2.jpeg" />
+                <img data-page="3" src="flip book/3.jpeg" />
+                <img data-page="4" src="flip book/4.jpeg" />
+                <img data-page="5" src="flip book/5.jpeg" />
+                <img data-page="6" src="flip book/6.jpeg" />
+                <img data-page="7" src="flip book/7.jpeg" />
+                <img data-page="8" src="flip book/8.jpeg" />
+                <img data-page="9" src="flip book/9.jpeg" />
+                <img data-page="10" src="flip book/10.jpeg" />
+                <img data-page="11" src="flip book/11.jpeg" />
+                <img data-page="12" src="flip book/12.jpeg" />
+                <img data-page="13" src="flip book/13.jpeg" />
+                <img data-page="14" src="flip book/14.jpeg" />
+                <img data-page="15" src="flip book/15.jpeg" />
+            </div>
+
+        </div>
+    </main>
+
+    <style>
+        :root{--book-width:760px;--book-height:520px;color:#111}
+        .storybook-root{height:100vh;display:grid;place-items:center;background:#f7f3ea;font-family:system-ui, -apple-system, 'Segoe UI', Roboto}
+        .book-wrap{perspective:1600px}
+        .book{width:var(--book-width);height:var(--book-height);position:relative;display:flex;box-shadow:0 18px 60px rgba(0,0,0,0.28);transform-style:preserve-3d}
+        .page{width:50%;height:100%;overflow:hidden;position:relative;background:#fff;border:1px solid rgba(0,0,0,0.12);box-sizing:border-box}
+        .page-inner{position:absolute;inset:12px;background:#fff;display:flex;align-items:center;justify-content:center}
+        .page-image{width:100%;height:100%;background-size:contain;background-repeat:no-repeat;background-position:center;}
+        .page-cover{position:absolute;inset:12px;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#ffd 0%,#ffe5c4 100%);pointer-events:none}
+        .left-page{transform-origin:left center;z-index:2}
+        .right-page{transform-origin:right center;z-index:3}
+        .right-page .page-inner.cover{display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#ffd 0%,#ffe5c4 100%)}
+        .cover-text{font-size:28px;font-weight:800;letter-spacing:1px;color:#6b3f18}
+        .page-flip-overlay{position:absolute;top:0;bottom:0;width:22%;cursor:pointer;z-index:6}
+        .flip-prev{left:0}
+        .flip-next{right:0}
+        .page.turning{transition:transform 520ms cubic-bezier(.2,.9,.2,1), box-shadow 520ms;box-shadow:0 18px 40px rgba(0,0,0,0.32)}
+        /* small border inside pages */
+        .page::after{content:'';position:absolute;inset:8px;border:1px solid rgba(0,0,0,0.04);pointer-events:none}
+
+        @media (max-width:900px){:root{--book-width:640px;--book-height:440px}}
+        @media (max-width:520px){:root{--book-width:360px;--book-height:300px}.page-flip-overlay{width:28%}}
+    </style>
+
+    <script>
+        (function(){
+            const TOTAL = 15;
+            const pagesData = document.querySelectorAll('.pages-data img[data-page]');
+            const leftPageEl = document.querySelector('.left-page .page-image');
+            const rightPageEl = document.querySelector('.right-page .page-image');
+            const coverEl = document.querySelector('.page-cover');
+            const bookEl = document.querySelector('.book');
+
+            // create easy lookup by index (1-based)
+            const pageSrc = {};
+            pagesData.forEach(img => { pageSrc[Number(img.dataset.page)] = img.src; });
+
+            let pairIndex = 0; // 0 = cover, 1 = pages 1&2, 2 = 3&4 ...
+            const maxPairs = Math.ceil(TOTAL / 2);
+
+            function renderPair(idx){
+                if(idx === 0){
+                    coverEl.style.display = '';
+                    leftPageEl.style.backgroundImage = '';
+                    rightPageEl.style.backgroundImage = '';
+                } else {
+                    coverEl.style.display = 'none';
+                    const leftNum = (idx - 1) * 2 + 1;
+                    const rightNum = leftNum + 1;
+                    leftPageEl.style.backgroundImage = pageSrc[leftNum] ? `url('${pageSrc[leftNum]}')` : '';
+                    rightPageEl.style.backgroundImage = pageSrc[rightNum] ? `url('${pageSrc[rightNum]}')` : '';
+                }
+            }
+
+            renderPair(pairIndex);
+
+            // swipe handling
+            let dragging = false;
+            let startX = 0;
+            let activeSide = null; // 'right' or 'left'
+            const bookRect = () => bookEl.getBoundingClientRect();
+
+            bookEl.addEventListener('pointerdown', (e) => {
+                dragging = true;
+                startX = e.clientX;
+                const rect = bookRect();
+                activeSide = (e.clientX > rect.left + rect.width/2) ? 'right' : 'left';
+                bookEl.setPointerCapture(e.pointerId);
+                e.preventDefault();
+            });
+
+            bookEl.addEventListener('pointermove', (e) => {
+                if(!dragging) return;
+                const dx = e.clientX - startX;
+                const rect = bookRect();
+                const width = rect.width/2; // half book corresponds to full 180deg
+                let pct = dx / width;
+                // clamp
+                if(activeSide === 'right') {
+                    // dragging left (dx negative) should rotate right page
+                    const angle = Math.max(-180, Math.min(0, pct * 180));
+                    document.querySelector('.right-page').style.transform = `rotateY(${angle}deg)`;
+                } else {
+                    // active left: dragging right (dx positive) rotates left page
+                    const angle = Math.max(0, Math.min(180, pct * 180));
+                    document.querySelector('.left-page').style.transform = `rotateY(${angle}deg)`;
+                }
+            });
+
+            bookEl.addEventListener('pointerup', (e) => {
+                if(!dragging) return;
+                dragging = false;
+                const dx = e.clientX - startX;
+                const rect = bookRect();
+                const threshold = rect.width * 0.12; // require ~12% of book width
+
+                // reset transforms after decision
+                const rightPage = document.querySelector('.right-page');
+                const leftPage = document.querySelector('.left-page');
+
+                if(activeSide === 'right'){
+                    if(dx < -threshold && pairIndex < maxPairs){
+                        // complete flip forward
+                        rightPage.style.transition = 'transform 420ms cubic-bezier(.2,.9,.2,1)';
+                        rightPage.style.transform = 'rotateY(-180deg)';
+                        setTimeout(()=>{
+                            pairIndex = Math.min(maxPairs, pairIndex + 1);
+                            rightPage.style.transition = '';
+                            rightPage.style.transform = '';
+                            renderPair(pairIndex);
+                        },420);
+                    } else {
+                        // revert
+                        rightPage.style.transition = 'transform 320ms ease';
+                        rightPage.style.transform = '';
+                        setTimeout(()=> rightPage.style.transition = '', 360);
+                    }
+                } else {
+                    if(dx > threshold && pairIndex > 0){
+                        leftPage.style.transition = 'transform 420ms cubic-bezier(.2,.9,.2,1)';
+                        leftPage.style.transform = 'rotateY(180deg)';
+                        setTimeout(()=>{
+                            pairIndex = Math.max(0, pairIndex - 1);
+                            leftPage.style.transition = '';
+                            leftPage.style.transform = '';
+                            renderPair(pairIndex);
+                        },420);
+                    } else {
+                        leftPage.style.transition = 'transform 320ms ease';
+                        leftPage.style.transform = '';
+                        setTimeout(()=> leftPage.style.transition = '', 360);
+                    }
+                }
+            });
+
+            // keyboard and click fallbacks
+            document.querySelector('.flip-next').addEventListener('click', ()=>{
+                if(pairIndex < maxPairs){ pairIndex++; renderPair(pairIndex); }
+            });
+            document.querySelector('.flip-prev').addEventListener('click', ()=>{
+                if(pairIndex > 0){ pairIndex--; renderPair(pairIndex); }
+            });
+
+            // prevent accidental image dragging
+            document.querySelectorAll('.pages-data img').forEach(img=> img.draggable = false);
+        })();
+    </script>
+</body>
+</html>

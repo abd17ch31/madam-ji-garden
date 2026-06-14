@@ -198,6 +198,71 @@ body {
     pointer-events: none;
 }
 
+/* Surprise button */
+.surprise-btn {
+    position: relative;
+    z-index: 10;
+    padding: 12px 20px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #071421;
+    background: linear-gradient(135deg, #fff7a8 0%, #ffd06b 40%, #ff8aa4 100%);
+    border: none;
+    border-radius: 999px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.28), 0 2px 6px rgba(255,160,160,0.08) inset;
+    cursor: pointer;
+    pointer-events: auto;
+    transition: transform 180ms ease, box-shadow 180ms ease, filter 180ms ease;
+    backdrop-filter: blur(6px);
+}
+
+.surprise-btn:hover {
+    transform: translateY(-3px) scale(1.02);
+    box-shadow: 0 14px 40px rgba(0,0,0,0.32), 0 3px 8px rgba(255,160,160,0.06) inset;
+}
+
+.surprise-btn:active {
+    transform: translateY(0) scale(0.995);
+}
+
+.surprise-btn:focus {
+    outline: 3px solid rgba(255,225,150,0.45);
+    outline-offset: 4px;
+}
+
+/* Container for action buttons (centered above the grass) */
+.action-buttons {
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 8vh;
+    z-index: 10;
+    display: inline-flex;
+    gap: 12px;
+    align-items: center;
+    pointer-events: auto;
+}
+
+/* secondary button that sits beside the primary surprise button */
+.storybook-btn {
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #e6f7ff 0%, #a6e1ff 40%, #7ab3ff 100%);
+    color: #071421;
+}
+
+.storybook-btn:hover { transform: translateY(-3px) scale(1.02); }
+.storybook-btn:active { transform: translateY(0) scale(0.995); }
+
+@media (max-width: 520px) {
+    .action-buttons { bottom: 6.5vh; gap: 8px; }
+    .surprise-btn, .storybook-btn {
+        padding: 10px 12px;
+        font-size: 13px;
+    }
+}
+
 .star {
     position: absolute;
 
